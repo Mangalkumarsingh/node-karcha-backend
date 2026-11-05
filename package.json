@@ -4,7 +4,7 @@
   "description": "Expense Management & Splitwise Application Backend (Node.js/TypeScript)",
   "main": "dist/index.js",
 "scripts": {
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "postinstall": "prisma generate", 
