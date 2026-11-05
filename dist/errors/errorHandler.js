@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.errorHandler = void 0;
 const zod_1 = require("zod");
-const client_1 = require("@prisma/client");
+const client_1 = require("../generated/client");
 const AppError_1 = require("./AppError");
 const errorHandler = (err, req, res, next) => {
     const timestamp = new Date().toISOString();
