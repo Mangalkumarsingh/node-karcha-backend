@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id                  String            @id @default(uuid()) @db.Uuid
+  phoneNumber         String?           @unique @map("phone_number") @db.VarChar(16)
+  createdAt           DateTime?         @default(now()) @map("created_at") @db.Timestamp(6)
+  otp                 String?           @db.VarChar(10)
+  otpExpiryTime       DateTime?         @map("otp_expiry_time") @db.Timestamp(6)
+  email               String?           @unique @db.VarChar(255)
+  googleSubject       String?           @unique @map("google_subject") @db.VarChar(255)
+  phoneVerified       Boolean?          @default(false) @map("phone_verified")
+  emailVerified       Boolean?          @default(false) @map("email_verified")
+  otpHash             String?           @map("otp_hash") @db.VarChar(255)
+  otpAttempts         Int?              @default(0) @map("otp_attempts")
+  otpLastSentAt       DateTime?         @map("otp_last_sent_at") @db.Timestamp(6)
+  name                String?           @db.VarChar(100)
+  profileImageUrl     String?           @map("profile_image_url") @db.VarChar(500)
+  createdGroups       ExpenseGroup[]    @relation("GroupCreator")
+  splits              ExpenseSplit[]
+  expensesPaid        Expense[]         @relation("ExpensePaidBy")
+  expensesCreated     Expense[]         @relation("ExpenseUser")
+  sentInvitations     GroupInvitation[] @relation("InvitedBy")
+  receivedInvitations GroupInvitation[] @relation("InvitedUser")
+  groupMemberships    GroupMember[]
+  settlementsSent     Settlement[]      @relation("SettlementFromUser")
+  settlementsReceived Settlement[]      @relation("SettlementToUser")
+
+  @@map("users")
+}
+
+model ExpenseGroup {
+  id          String            @id @default(uuid()) @db.Uuid
+  name        String            @db.VarChar(100)
+  description String?           @db.VarChar(500)
+  currency    String            @default("INR") @db.VarChar(10)
+  createdById String            @map("created_by_id") @db.Uuid
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt   DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  archivedAt  DateTime?         @map("archived_at") @db.Timestamp(6)
+  createdBy   User              @relation("GroupCreator", fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_group_created_by")
+  expenses    Expense[]
+  invitations GroupInvitation[]
+  members     GroupMember[]
+  settlements Settlement[]
+
+  @@map("expense_groups")
+}
+
+model GroupMember {
+  id       String       @id @default(uuid()) @db.Uuid
+  groupId  String       @map("group_id") @db.Uuid
+  userId   String       @map("user_id") @db.Uuid
+  role     String       @default("MEMBER") @db.VarChar(20)
+  status   String       @default("ACTIVE") @db.VarChar(20)
+  joinedAt DateTime     @default(now()) @map("joined_at") @db.Timestamp(6)
+  group    ExpenseGroup @relation(fields: [groupId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_member_group")
+  user     User         @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_member_user")
+
+  @@unique([groupId, userId], name: "uq_group_member", map: "uq_group_member")
+  @@index([userId], map: "idx_group_members_user")
+  @@index([groupId], map: "idx_group_members_group")
+  @@map("group_members")
+}
+
+model GroupInvitation {
+  id                 String       @id @default(uuid()) @db.Uuid
+  groupId            String       @map("group_id") @db.Uuid
+  invitedPhoneNumber String       @map("invited_phone_number") @db.VarChar(20)
+  invitedUserId      String?      @map("invited_user_id") @db.Uuid
+  invitedById        String       @map("invited_by_id") @db.Uuid
+  status             String       @default("PENDING") @db.VarChar(20)
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+  expiresAt          DateTime     @map("expires_at") @db.Timestamp(6)
+  group              ExpenseGroup @relation(fields: [groupId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_invitation_group")
+  invitedBy          User         @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_invitation_invited_by")
+  invitedUser        User?        @relation("InvitedUser", fields: [invitedUserId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_invitation_user")
+
+  @@index([invitedPhoneNumber], map: "idx_group_invitations_phone")
+  @@index([invitedUserId], map: "idx_group_invitations_user")
+  @@map("group_invitations")
+}
+
+model Expense {
+  id          String         @id @default(uuid()) @db.Uuid
+  title       String         @db.VarChar(100)
+  amount      Decimal        @db.Decimal(12, 2)
+  userId      String         @map("user_id") @db.Uuid
+  createdAt   DateTime?      @default(now()) @map("created_at") @db.Timestamp(6)
+  groupId     String?        @map("group_id") @db.Uuid
+  description String?        @db.VarChar(500)
+  currency    String?        @default("INR") @db.VarChar(10)
+  paidById    String?        @map("paid_by_id") @db.Uuid
+  splitType   String?        @default("EQUAL") @map("split_type") @db.VarChar(20)
+  updatedAt   DateTime?      @map("updated_at") @db.Timestamp(6)
+  deletedAt   DateTime?      @map("deleted_at") @db.Timestamp(6)
+  splits      ExpenseSplit[]
+  group       ExpenseGroup?  @relation(fields: [groupId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  paidBy      User?          @relation("ExpensePaidBy", fields: [paidById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user        User           @relation("ExpenseUser", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_expense_user")
+
+  @@index([groupId], map: "idx_expenses_group")
+  @@map("expenses")
+}
+
+model ExpenseSplit {
+  id          String  @id @default(uuid()) @db.Uuid
+  expenseId   String  @map("expense_id") @db.Uuid
+  userId      String  @map("user_id") @db.Uuid
+  shareAmount Decimal @map("share_amount") @db.Decimal(12, 2)
+  expense     Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_split_expense")
+  user        User    @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_split_user")
+
+  @@unique([expenseId, userId], name: "uq_expense_split_user", map: "uq_expense_split_user")
+  @@index([expenseId], map: "idx_expense_splits_expense")
+  @@index([userId], map: "idx_expense_splits_user")
+  @@map("expense_splits")
+}
+
+model Settlement {
+  id             String       @id @default(uuid()) @db.Uuid
+  groupId        String       @map("group_id") @db.Uuid
+  fromUserId     String       @map("from_user_id") @db.Uuid
+  toUserId       String       @map("to_user_id") @db.Uuid
+  amount         Decimal      @db.Decimal(12, 2)
+  currency       String       @default("INR") @db.VarChar(10)
+  paymentMethod  String       @default("CASH") @map("payment_method") @db.VarChar(30)
+  status         String       @default("PENDING") @db.VarChar(20)
+  note           String?      @db.VarChar(255)
+  idempotencyKey String?      @map("idempotency_key") @db.VarChar(100)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+  confirmedAt    DateTime?    @map("confirmed_at") @db.Timestamp(6)
+  fromUser       User         @relation("SettlementFromUser", fields: [fromUserId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_settlement_from_user")
+  group          ExpenseGroup @relation(fields: [groupId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_settlement_group")
+  toUser         User         @relation("SettlementToUser", fields: [toUserId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_settlement_to_user")
+
+  @@index([groupId], map: "idx_settlements_group")
+  @@map("settlements")
+}
+
+model flyway_schema_history {
+  installed_rank Int      @id(map: "flyway_schema_history_pk")
+  version        String?  @db.VarChar(50)
+  description    String   @db.VarChar(200)
+  type           String   @db.VarChar(20)
+  script         String   @db.VarChar(1000)
+  checksum       Int?
+  installed_by   String   @db.VarChar(100)
+  installed_on   DateTime @default(now()) @db.Timestamp(6)
+  execution_time Int
+  success        Boolean
+
+  @@index([success], map: "flyway_schema_history_s_idx")
+}
