@@ -75,7 +75,8 @@ model GroupMember {
 model GroupInvitation {
   id                 String       @id @default(uuid()) @db.Uuid
   groupId            String       @map("group_id") @db.Uuid
-  invitedPhoneNumber String       @map("invited_phone_number") @db.VarChar(20)
+  invitedPhoneNumber String?      @map("invited_phone_number") @db.VarChar(20)
+  invitedEmail       String?      @map("invited_email") @db.VarChar(255)
   invitedUserId      String?      @map("invited_user_id") @db.Uuid
   invitedById        String       @map("invited_by_id") @db.Uuid
   status             String       @default("PENDING") @db.VarChar(20)
@@ -87,6 +88,7 @@ model GroupInvitation {
 
   @@index([invitedPhoneNumber], map: "idx_group_invitations_phone")
   @@index([invitedUserId], map: "idx_group_invitations_user")
+  @@index([invitedEmail], map: "idx_group_invitations_email")
   @@map("group_invitations")
 }
 
@@ -160,4 +162,18 @@ model flyway_schema_history {
   success        Boolean
 
   @@index([success], map: "flyway_schema_history_s_idx")
+}
+
+model EmailOtpChallenge {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @db.VarChar(255)
+  otpHash      String   @map("otp_hash") @db.VarChar(255)
+  attempts     Int      @default(0)
+  expiresAt    DateTime @map("expires_at") @db.Timestamp(6)
+  lastSentAt   DateTime @default(now()) @map("last_sent_at") @db.Timestamp(6)
+  ipAddress    String?  @map("ip_address") @db.VarChar(100)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([email], map: "idx_email_otp_challenges_email")
+  @@map("email_otp_challenges")
 }

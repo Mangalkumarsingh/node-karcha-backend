@@ -25,7 +25,10 @@ const updateGroupSchema = z.object({
 });
 
 const inviteMemberSchema = z.object({
-  phoneNumber: z.string().min(1, "Phone number is required"),
+  email: z.string().email("Invalid email address").optional(),
+  phoneNumber: z.string().optional(),
+}).refine(data => data.email || data.phoneNumber, {
+  message: "Either email or phoneNumber is required",
 });
 
 const createSharedExpenseSchema = z.object({
@@ -104,8 +107,8 @@ groupRouter.delete("/:groupId", async (req: Request, res: Response, next: NextFu
 groupRouter.post("/:groupId/invitations", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const groupId = req.params.groupId as string;
-    const { phoneNumber } = inviteMemberSchema.parse(req.body);
-    const result = await GroupMemberService.inviteMember(groupId, phoneNumber, req.user!.id);
+    const { email, phoneNumber } = inviteMemberSchema.parse(req.body);
+    const result = await GroupMemberService.inviteMember(groupId, { email, phoneNumber }, req.user!.id);
     res.status(201).json(result);
   } catch (error) {
     next(error);

@@ -1,14 +1,26 @@
 import { prisma } from "../../prisma";
 import { PhoneUtil } from "../../utils/phone.util";
+import { EmailUtil } from "../../utils/email.util";
 import { BalanceService } from "./balance.service";
 import { AppError } from "../../errors/AppError";
+
+export interface InviteMemberParams {
+  email?: string;
+  phoneNumber?: string;
+}
 
 export class GroupMemberService {
   public static async inviteMember(
     groupId: string,
-    phoneNumber: string,
+    params: InviteMemberParams,
     inviterUserId: string
   ) {
+    const { email, phoneNumber } = params;
+
+    if (!email && !phoneNumber) {
+      throw new AppError(400, "Either email or phoneNumber must be provided");
+    }
+
     const group = await prisma.expenseGroup.findFirst({
       where: { id: groupId, archivedAt: null },
     });
@@ -25,40 +37,6 @@ export class GroupMemberService {
       throw new AppError(403, "You must be an active member to invite others");
     }
 
-    const normalizedPhone = PhoneUtil.normalizePhoneNumber(phoneNumber);
-
-    // Check if user is already an active member
-    const alreadyActive = await prisma.groupMember.findFirst({
-      where: {
-        groupId,
-        status: "ACTIVE",
-        user: { phoneNumber: normalizedPhone },
-      },
-    });
-
-    if (alreadyActive) {
-      throw new AppError(409, "User is already an active member of this group");
-    }
-
-    const now = new Date();
-    // Check pending, unexpired invitation
-    const pendingInvitation = await prisma.groupInvitation.findFirst({
-      where: {
-        groupId,
-        invitedPhoneNumber: normalizedPhone,
-        status: "PENDING",
-        expiresAt: { gt: now },
-      },
-    });
-
-    if (pendingInvitation) {
-      throw new AppError(409, "A pending invitation already exists for this phone number");
-    }
-
-    const invitedUser = await prisma.user.findUnique({
-      where: { phoneNumber: normalizedPhone },
-    });
-
     const inviter = await prisma.user.findUnique({
       where: { id: inviterUserId },
     });
@@ -67,11 +45,62 @@ export class GroupMemberService {
       throw new AppError(404, "User not found");
     }
 
+    const normalizedEmail = email ? EmailUtil.normalizeEmail(email) : null;
+    const normalizedPhone = phoneNumber ? PhoneUtil.normalizePhoneNumber(phoneNumber) : null;
+
+    // Check if user is already an active member by email or phone
+    const alreadyActive = await prisma.groupMember.findFirst({
+      where: {
+        groupId,
+        status: "ACTIVE",
+        user: {
+          OR: [
+            ...(normalizedEmail ? [{ email: normalizedEmail }] : []),
+            ...(normalizedPhone ? [{ phoneNumber: normalizedPhone }] : []),
+          ],
+        },
+      },
+    });
+
+    if (alreadyActive) {
+      throw new AppError(409, "User is already an active member of this group");
+    }
+
+    const now = new Date();
+
+    // Check pending, unexpired invitation
+    const pendingInvitation = await prisma.groupInvitation.findFirst({
+      where: {
+        groupId,
+        status: "PENDING",
+        expiresAt: { gt: now },
+        OR: [
+          ...(normalizedEmail ? [{ invitedEmail: normalizedEmail }] : []),
+          ...(normalizedPhone ? [{ invitedPhoneNumber: normalizedPhone }] : []),
+        ],
+      },
+    });
+
+    if (pendingInvitation) {
+      throw new AppError(409, "A pending invitation already exists for this contact");
+    }
+
+    // Try finding an existing user by email or phone
+    const invitedUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          ...(normalizedEmail ? [{ email: normalizedEmail }] : []),
+          ...(normalizedPhone ? [{ phoneNumber: normalizedPhone }] : []),
+        ],
+      },
+    });
+
     const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
     const invitation = await prisma.groupInvitation.create({
       data: {
         groupId,
+        invitedEmail: normalizedEmail,
         invitedPhoneNumber: normalizedPhone,
         invitedUserId: invitedUser ? invitedUser.id : null,
         invitedById: inviterUserId,
@@ -89,6 +118,7 @@ export class GroupMemberService {
       id: invitation.id,
       groupId: invitation.groupId,
       groupName: invitation.group.name,
+      invitedEmail: invitation.invitedEmail,
       invitedPhoneNumber: invitation.invitedPhoneNumber,
       invitedUser: invitation.invitedUser
         ? {
@@ -210,11 +240,12 @@ export class GroupMemberService {
       throw new AppError(400, "Invitation has expired");
     }
 
-    const phoneMatches = user.phoneNumber && user.phoneNumber === invitation.invitedPhoneNumber;
+    const emailMatches = user.email && invitation.invitedEmail && user.email.toLowerCase() === invitation.invitedEmail.toLowerCase();
+    const phoneMatches = user.phoneNumber && invitation.invitedPhoneNumber && user.phoneNumber === invitation.invitedPhoneNumber;
     const userMatches = invitation.invitedUserId === callerUserId;
 
-    if (!phoneMatches && !userMatches) {
-      throw new AppError(403, "This invitation was sent to a different user/phone number");
+    if (!emailMatches && !phoneMatches && !userMatches) {
+      throw new AppError(403, "This invitation was sent to a different user/contact");
     }
 
     await prisma.groupInvitation.update({
@@ -263,11 +294,12 @@ export class GroupMemberService {
       throw new AppError(404, "Invitation not found");
     }
 
-    const phoneMatches = user.phoneNumber && user.phoneNumber === invitation.invitedPhoneNumber;
+    const emailMatches = user.email && invitation.invitedEmail && user.email.toLowerCase() === invitation.invitedEmail.toLowerCase();
+    const phoneMatches = user.phoneNumber && invitation.invitedPhoneNumber && user.phoneNumber === invitation.invitedPhoneNumber;
     const userMatches = invitation.invitedUserId === callerUserId;
 
-    if (!phoneMatches && !userMatches) {
-      throw new AppError(403, "This invitation was sent to a different user/phone number");
+    if (!emailMatches && !phoneMatches && !userMatches) {
+      throw new AppError(403, "This invitation was sent to a different user/contact");
     }
 
     await prisma.groupInvitation.update({
@@ -293,6 +325,7 @@ export class GroupMemberService {
         expiresAt: { gt: now },
         OR: [
           { invitedUserId: userId },
+          ...(user.email ? [{ invitedEmail: user.email.toLowerCase() }] : []),
           ...(user.phoneNumber ? [{ invitedPhoneNumber: user.phoneNumber }] : []),
         ],
       },
@@ -308,6 +341,7 @@ export class GroupMemberService {
       id: inv.id,
       groupId: inv.groupId,
       groupName: inv.group.name,
+      invitedEmail: inv.invitedEmail,
       invitedPhoneNumber: inv.invitedPhoneNumber,
       invitedUser: inv.invitedUser
         ? {
