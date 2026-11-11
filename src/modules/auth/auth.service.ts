@@ -8,10 +8,6 @@ import { PhoneUtil } from "../../utils/phone.util";
 import { TokenService } from "../../utils/token.service";
 import { AppError } from "../../errors/AppError";
 
-const DUMMY_PHONE_NUMBER = "+916207210408";
-const DUMMY_EMAIL = "test@example.com";
-const DUMMY_OTP = "123456";
-
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || "dummy-google-client-id");
 
 export class AuthService {
@@ -63,6 +59,11 @@ export class AuthService {
     const otp = otpInt.toString();
     const otpHash = await bcrypt.hash(otp, 10);
     const expiresAt = new Date(now.getTime() + expirySeconds * 1000);
+
+    // Invalidate old pending challenges for this email so previous OTP cannot be used
+    await prisma.emailOtpChallenge.deleteMany({
+      where: { email },
+    });
 
     // Save challenge
     await prisma.emailOtpChallenge.create({
@@ -126,44 +127,6 @@ export class AuthService {
 
     const maxAttempts = parseInt(process.env.EMAIL_OTP_MAX_ATTEMPTS || "5", 10);
     const now = new Date();
-
-    // Check dummy account bypass for dev/testing
-    if (email === DUMMY_EMAIL && otp === DUMMY_OTP) {
-      let user = await prisma.user.findUnique({ where: { email } });
-      let isNewUser = false;
-      if (!user) {
-        user = await prisma.user.create({
-          data: {
-            email,
-            emailVerified: true,
-          },
-        });
-        isNewUser = true;
-      } else {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: { emailVerified: true },
-        });
-      }
-
-      // Link any pending invitations
-      await this.claimPendingInvitationsForUser(user.id, email, user.phoneNumber);
-
-      const { accessToken, expiresIn } = TokenService.generateAccessToken(user.id);
-      return {
-        accessToken,
-        tokenType: "Bearer",
-        expiresIn,
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          profileImageUrl: user.profileImageUrl,
-          emailVerified: user.emailVerified ?? true,
-          loginType: "EMAIL",
-        },
-      };
-    }
 
     // Find the latest valid OTP challenge
     const challenge = await prisma.emailOtpChallenge.findFirst({
@@ -392,26 +355,6 @@ export class AuthService {
 
     const now = new Date();
 
-    if (phone === DUMMY_PHONE_NUMBER) {
-      const hashedOtp = await bcrypt.hash(DUMMY_OTP, 10);
-      const expiry = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          otpHash: hashedOtp,
-          otpExpiryTime: expiry,
-          otpLastSentAt: now,
-          otpAttempts: 0,
-        },
-      });
-      return {
-        success: true,
-        message: "If eligible, a verification code has been sent",
-        expiresInSeconds: 300,
-        resendAfterSeconds: 60,
-      };
-    }
-
     if (user.otpLastSentAt && now.getTime() < user.otpLastSentAt.getTime() + 60 * 1000) {
       throw new AppError(429, "Please try again later");
     }
@@ -440,45 +383,6 @@ export class AuthService {
 
   public static async verifyOtp(phoneNumber: string, otp: string) {
     const phone = PhoneUtil.normalizePhoneNumber(phoneNumber);
-
-    if (phone === DUMMY_PHONE_NUMBER && otp === DUMMY_OTP) {
-      let user = await prisma.user.findUnique({
-        where: { phoneNumber: phone },
-      });
-
-      if (!user) {
-        user = await prisma.user.create({
-          data: {
-            phoneNumber: phone,
-            phoneVerified: true,
-          },
-        });
-      }
-
-      const isNewUser = !user.phoneVerified;
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          phoneVerified: true,
-          otpHash: null,
-          otpExpiryTime: null,
-          otpAttempts: 0,
-        },
-      });
-
-      const { accessToken, expiresIn } = TokenService.generateAccessToken(user.id);
-      return {
-        id: user.id,
-        phoneNumber: user.phoneNumber,
-        email: user.email,
-        loginType: "PHONE",
-        newUser: isNewUser,
-        accessToken,
-        tokenType: "Bearer",
-        expiresIn,
-        message: "Login successful",
-      };
-    }
 
     const user = await prisma.user.findUnique({
       where: { phoneNumber: phone },
